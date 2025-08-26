@@ -13,16 +13,19 @@ export interface Database {
         Row: {
           id: string
           phone: string
+          instagram_handle: string | null
           created_at: string
         }
         Insert: {
           id: string
           phone: string
+          instagram_handle?: string | null
           created_at?: string
         }
         Update: {
           id?: string
           phone?: string
+          instagram_handle?: string | null
           created_at?: string
         }
       }
@@ -31,21 +34,27 @@ export interface Database {
           id: string
           user_id: string
           name: string
-          phone: string
+          phone: string | null
+          instagram_handle: string | null
+          contact_type: string
           created_at: string
         }
         Insert: {
           id?: string
           user_id: string
           name: string
-          phone: string
+          phone?: string | null
+          instagram_handle?: string | null
+          contact_type?: string
           created_at?: string
         }
         Update: {
           id?: string
           user_id?: string
           name?: string
-          phone?: string
+          phone?: string | null
+          instagram_handle?: string | null
+          contact_type?: string
           created_at?: string
         }
       }
@@ -124,6 +133,35 @@ export interface Database {
           unlocks_at?: string
         }
       }
+      slot_locks: {
+        Row: {
+          id: string
+          user_id: string
+          slot_number: number
+          locked_until: string
+          reason: string
+          match_id: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          slot_number: number
+          locked_until: string
+          reason: string
+          match_id?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          slot_number?: number
+          locked_until?: string
+          reason?: string
+          match_id?: string | null
+          created_at?: string
+        }
+      }
       match_processing: {
         Row: {
           id: string
@@ -165,4 +203,5 @@ export type Contact = Database['public']['Tables']['contacts']['Row']
 export type WishlistEntry = Database['public']['Tables']['wishlist_entries']['Row']
 export type Match = Database['public']['Tables']['matches']['Row']
 export type SlotUnlock = Database['public']['Tables']['slot_unlocks']['Row']
+export type SlotLock = Database['public']['Tables']['slot_locks']['Row']
 export type MatchProcessing = Database['public']['Tables']['match_processing']['Row']

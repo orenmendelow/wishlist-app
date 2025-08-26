@@ -11,6 +11,8 @@ interface AuthContextType {
   loading: boolean
   signInWithPhone: (phone: string) => Promise<{ error: any }>
   verifyOtp: (phone: string, otp: string) => Promise<{ error: any }>
+  linkInstagram: (handle: string) => Promise<{ error: any }>
+  verifyInstagramOtp: (handle: string, otp: string) => Promise<{ error: any }>
   signOut: () => Promise<void>
 }
 
@@ -31,6 +33,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Mock sign in - accepts any phone
   const signInWithPhone = async (phone: string) => {
+    return { error: null }
+  }
+
+  // Mock Instagram linking - accepts any handle
+  const linkInstagram = async (handle: string) => {
     return { error: null }
   }
 
@@ -60,6 +67,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         finalProfile = {
           id: userId,
           phone: normalizedPhone,
+          instagram_handle: null,
           created_at: new Date().toISOString()
         }
         
@@ -89,6 +97,33 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setProfile(finalProfile)
       localStorage.setItem('wishlist_user', JSON.stringify(fakeUser))
       localStorage.setItem('wishlist_profile', JSON.stringify(finalProfile))
+      
+      return { error: null }
+    }
+    return { error: { message: 'Invalid verification code' } }
+  }
+
+  // Mock Instagram OTP verification - accepts '123456' and updates profile
+  const verifyInstagramOtp = async (handle: string, otp: string) => {
+    if (otp === '123456' && user && profile) {
+      // Update profile with Instagram handle
+      const updatedProfile = {
+        ...profile,
+        instagram_handle: handle
+      }
+      
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ instagram_handle: handle })
+        .eq('id', user.id)
+      
+      if (updateError) {
+        console.error('Instagram linking failed:', updateError)
+        return { error: updateError }
+      }
+      
+      setProfile(updatedProfile)
+      localStorage.setItem('wishlist_profile', JSON.stringify(updatedProfile))
       
       return { error: null }
     }
@@ -140,6 +175,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     loading,
     signInWithPhone,
     verifyOtp,
+    linkInstagram,
+    verifyInstagramOtp,
     signOut,
   }
 

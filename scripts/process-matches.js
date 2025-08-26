@@ -96,7 +96,7 @@ async function processMatches() {
 
     console.log(`Summary: ${validMatches.length} revealed, ${invalidMatches.length} removed`)
 
-    // Update next processing time
+    // Update next processing time using the SQL function
     const { data: latestProcessing } = await supabase
       .from('match_processing')
       .select('id')
@@ -105,18 +105,21 @@ async function processMatches() {
       .single()
 
     if (latestProcessing) {
+      // Get next Thursday 5pm EST using the SQL function
+      const { data: nextThursday } = await supabase.rpc('next_thursday_5pm')
+      
       const { error: scheduleError } = await supabase
         .from('match_processing')
         .update({ 
           last_processed_at: new Date().toISOString(),
-          next_processing_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // +1 week for testing
+          next_processing_at: nextThursday
         })
         .eq('id', latestProcessing.id)
 
       if (scheduleError) {
         console.error('Error updating schedule:', scheduleError)
       } else {
-        console.log('📅 Next processing scheduled for +1 week')
+        console.log('📅 Next processing scheduled for next Thursday at 5pm EST')
       }
     }
     

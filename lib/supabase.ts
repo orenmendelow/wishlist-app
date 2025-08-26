@@ -32,3 +32,55 @@ export const signOut = async () => {
   const { error } = await supabase.auth.signOut()
   return { error }
 }
+
+// Contact helpers for phone and Instagram
+export const addPhoneContact = async (userId: string, name: string, phone: string) => {
+  const { data, error } = await supabase
+    .from('contacts')
+    .insert({
+      user_id: userId,
+      name: name.trim(),
+      phone: phone.replace(/\D/g, '').replace(/^1/, ''), // Normalize to 10 digits
+      contact_type: 'phone'
+    })
+    .select()
+    .single()
+  return { data, error }
+}
+
+export const addInstagramContact = async (userId: string, name: string, instagramHandle: string) => {
+  // Remove @ symbol if present
+  const cleanHandle = instagramHandle.replace(/^@/, '').toLowerCase()
+  
+  const { data, error } = await supabase
+    .from('contacts')
+    .insert({
+      user_id: userId,
+      name: name.trim(),
+      instagram_handle: cleanHandle,
+      contact_type: 'instagram'
+    })
+    .select()
+    .single()
+  return { data, error }
+}
+
+// Find contact by phone or Instagram handle
+export const findContactByIdentifier = async (userId: string, identifier: string, type: 'phone' | 'instagram') => {
+  let query = supabase
+    .from('contacts')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('contact_type', type)
+  
+  if (type === 'phone') {
+    const normalizedPhone = identifier.replace(/\D/g, '').replace(/^1/, '')
+    query = query.eq('phone', normalizedPhone)
+  } else {
+    const cleanHandle = identifier.replace(/^@/, '').toLowerCase()
+    query = query.eq('instagram_handle', cleanHandle)
+  }
+  
+  const { data, error } = await query.single()
+  return { data, error }
+}

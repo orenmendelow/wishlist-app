@@ -3,7 +3,8 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
-import { Contact, WishlistEntry, SlotUnlock, MatchProcessing } from '@/lib/database.types'
+import { Contact, WishlistEntry, SlotUnlock, SlotLock, MatchProcessing } from '@/lib/database.types'
+import MatchesModal from './MatchesModal'
 
 // Wishlist entry with contact data for display
 interface WishlistEntryWithContact extends WishlistEntry {
@@ -27,15 +28,26 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null)
   const [contactName, setContactName] = useState('')
   const [contactPhone, setContactPhone] = useState('')
+  const [contactInstagram, setContactInstagram] = useState('')
+  const [contactType, setContactType] = useState<'phone' | 'instagram'>('phone')
   
   // Slot unlock times from database
   const [slotUnlocks, setSlotUnlocks] = useState<SlotUnlock[]>([])
+  
+  // Slot lock times from database
+  const [slotLocks, setSlotLocks] = useState<SlotLock[]>([])
   
   // Match processing info
   const [nextMatchProcessing, setNextMatchProcessing] = useState<Date | null>(null)
   
   // Current time for countdown updates
   const [currentTime, setCurrentTime] = useState(new Date())
+  
+  // Matches modal state
+  const [showMatchesModal, setShowMatchesModal] = useState(false)
+  
+  // Admin/testing state
+  const [processingMatches, setProcessingMatches] = useState(false)
 
   // Fetch slot unlock times for countdown display
   const fetchSlotUnlocks = useCallback(async () => {
@@ -46,6 +58,18 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
       .eq('user_id', user.id)
       .order('slot_number')
     if (data) setSlotUnlocks(data)
+  }, [user])
+
+  // Fetch slot lock times for countdown display
+  const fetchSlotLocks = useCallback(async () => {
+    if (!user) return
+    const { data } = await supabase
+      .from('slot_locks')
+      .select('*')
+      .eq('user_id', user.id)
+      .gt('locked_until', new Date().toISOString()) // Only active locks
+      .order('slot_number')
+    if (data) setSlotLocks(data)
   }, [user])
 
   // Fetch next match processing time
@@ -70,12 +94,15 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
 
   // Load slot unlock data on mount
   useEffect(() => {
-    if (user) fetchSlotUnlocks()
+    if (user) {
+      fetchSlotUnlocks()
+      fetchSlotLocks()
+    }
     fetchMatchProcessing() // This doesn't need user context
-  }, [user, fetchSlotUnlocks, fetchMatchProcessing])
+  }, [user, fetchSlotUnlocks, fetchSlotLocks, fetchMatchProcessing])
 
-  // Add contact to wishlist slot
-  const addContact = async (name: string, phone: string, slotNumber: number) => {
+  // Add contact to wishlist slot (phone or Instagram)
+  const addContact = async (name: string, identifier: string, slotNumber: number, type: 'phone' | 'instagram') => {
     if (!user) return
 
     // Verify user profile exists in database
@@ -94,17 +121,36 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
     
     console.log('User profile verified:', userProfile)
 
-    // Normalize phone to 10 digits (remove country code and formatting)
-    const normalizedPhone = phone.replace(/\D/g, '').replace(/^1/, '')
-    if (normalizedPhone.length !== 10) {
-      alert('Please enter a valid 10-digit phone number')
-      return
+    let normalizedIdentifier: string
+    
+    if (type === 'phone') {
+      // Normalize phone to 10 digits (only remove leading 1 if it results in 10 digits)
+      let cleaned = identifier.replace(/\D/g, '')
+      if (cleaned.length === 11 && cleaned.startsWith('1')) {
+        cleaned = cleaned.slice(1) // Remove country code
+      }
+      normalizedIdentifier = cleaned
+      
+      if (normalizedIdentifier.length !== 10) {
+        alert('Please enter a valid 10-digit phone number')
+        return
+      }
+    } else {
+      // Normalize Instagram handle (remove @ and convert to lowercase)
+      normalizedIdentifier = identifier.replace(/^@/, '').toLowerCase()
+      if (normalizedIdentifier.length < 1) {
+        alert('Please enter a valid Instagram handle')
+        return
+      }
     }
 
-    console.log('Adding contact with normalized phone:', normalizedPhone)
+    console.log(`Adding ${type} contact with normalized identifier:`, normalizedIdentifier)
 
-    // Check if phone already exists in wishlist
-    const existingEntry = wishlistEntries.find(e => e.contacts.phone === normalizedPhone)
+    // Check if contact already exists in wishlist
+    const existingEntry = wishlistEntries.find(e => 
+      type === 'phone' ? e.contacts.phone === normalizedIdentifier 
+                       : e.contacts.instagram_handle === normalizedIdentifier
+    )
     if (existingEntry) {
       alert(`This contact is already in slot ${existingEntry.slot_number}`)
       return
@@ -112,12 +158,23 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
 
     try {
       // Find or create contact
-      let contact = contacts.find(c => c.phone === normalizedPhone)
+      let contact = contacts.find(c => 
+        type === 'phone' ? c.phone === normalizedIdentifier 
+                         : c.instagram_handle === normalizedIdentifier
+      )
+      
       if (!contact) {
-        console.log('Creating new contact for user:', user.id)
+        console.log(`Creating new ${type} contact for user:`, user.id)
+        const contactData = {
+          user_id: user.id,
+          name: name.trim(),
+          contact_type: type,
+          ...(type === 'phone' ? { phone: normalizedIdentifier } : { instagram_handle: normalizedIdentifier })
+        }
+        
         const { data, error } = await supabase
           .from('contacts')
-          .insert({ user_id: user.id, name: name.trim(), phone: normalizedPhone })
+          .insert(contactData)
           .select()
           .single()
         if (error) {
@@ -152,12 +209,14 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
       // Check for match
       await checkForMatch(contact.id, userProfile, contact)
       
-      // Refresh UI
+      // Refresh UI and slot locks
       onWishlistUpdated()
+      fetchSlotLocks() // Refresh locks in case there were any changes
       setShowContactForm(false)
       setSelectedSlot(null)
       setContactName('')
       setContactPhone('')
+      setContactInstagram('')
     } catch (error: any) {
       alert(`Error: ${error.message}`)
     }
@@ -212,8 +271,9 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
 
       console.log(`Slot ${slotNumber} deleted and locked until:`, lockUntil)
       
-      // Refresh UI
+      // Refresh UI and slot locks
       onWishlistUpdated()
+      fetchSlotLocks() // Refresh locks since we just added one
       fetchSlotUnlocks()
     } catch (error: any) {
       alert(`Error: ${error.message}`)
@@ -243,35 +303,85 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
       return
     }
 
-    console.log('Checking match for contact:', contact.phone)
+    console.log('Checking match for contact:', contact)
 
-    // Find if contact is a user of the app (normalize phone for comparison)
-    const normalizedContactPhone = contact.phone.replace(/\D/g, '').replace(/^1/, '')
-    const { data: contactProfile, error: profileError } = await supabase
-      .from('profiles')
-      .select('id, phone')
-      .eq('phone', normalizedContactPhone)
-      .single()
+    let contactProfile = null
+
+    if (contact.contact_type === 'phone' && contact.phone) {
+      // For phone contacts, find if they're a user by phone number
+      let normalizedContactPhone = contact.phone.replace(/\D/g, '')
+      if (normalizedContactPhone.length === 11 && normalizedContactPhone.startsWith('1')) {
+        normalizedContactPhone = normalizedContactPhone.slice(1) // Remove country code
+      }
+      
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, phone, instagram_handle')
+        .eq('phone', normalizedContactPhone)
+        .single()
+      
+      if (!error && data) {
+        contactProfile = data
+      }
+    } else if (contact.contact_type === 'instagram' && contact.instagram_handle) {
+      // For Instagram contacts, find if they're a user by Instagram handle
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, phone, instagram_handle')
+        .eq('instagram_handle', contact.instagram_handle)
+        .single()
+      
+      if (!error && data) {
+        contactProfile = data
+      }
+    }
     
-    if (profileError || !contactProfile) {
+    if (!contactProfile) {
       console.log('Contact is not a user of the app')
       return
     }
 
     console.log('Contact is a user:', contactProfile.id)
 
-    // Normalize current user's phone for lookup
-    const currentUserPhone = currentProfile.phone.replace(/\D/g, '').replace(/^1/, '')
-    
     // Check if they have current user in their contacts
-    const { data: theirContact, error: contactError } = await supabase
-      .from('contacts')
-      .select('id')
-      .eq('user_id', contactProfile.id)
-      .eq('phone', currentUserPhone)
-      .single()
+    let theirContact = null
+
+    if (currentProfile.phone) {
+      // Check if they have current user by phone
+      let currentUserPhone = currentProfile.phone.replace(/\D/g, '')
+      if (currentUserPhone.length === 11 && currentUserPhone.startsWith('1')) {
+        currentUserPhone = currentUserPhone.slice(1) // Remove country code
+      }
+      
+      const { data, error } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('user_id', contactProfile.id)
+        .eq('phone', currentUserPhone)
+        .eq('contact_type', 'phone')
+        .single()
+      
+      if (!error && data) {
+        theirContact = data
+      }
+    }
+
+    if (!theirContact && currentProfile.instagram_handle) {
+      // Check if they have current user by Instagram
+      const { data, error } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('user_id', contactProfile.id)
+        .eq('instagram_handle', currentProfile.instagram_handle)
+        .eq('contact_type', 'instagram')
+        .single()
+      
+      if (!error && data) {
+        theirContact = data
+      }
+    }
     
-    if (contactError || !theirContact) {
+    if (!theirContact) {
       console.log('They do not have current user in their contacts')
       return
     }
@@ -341,13 +451,22 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
   // Handle slot click (open form or ignore if locked/filled)
   const handleSlotClick = (slotNumber: number) => {
     const unlock = slotUnlocks.find(u => u.slot_number === slotNumber)
-    const isLocked = unlock && new Date(unlock.unlocks_at) > currentTime
+    const lock = slotLocks.find(l => l.slot_number === slotNumber)
     const hasFilled = wishlistEntries.find(e => e.slot_number === slotNumber)
     
-    if (isLocked || hasFilled) return
+    // Check if slot is not yet unlocked
+    const isNotYetUnlocked = unlock && new Date(unlock.unlocks_at) > currentTime
+    // Check if slot is locked (cooldown)
+    const isLocked = lock && new Date(lock.locked_until) > currentTime
+    
+    if (isNotYetUnlocked || isLocked || hasFilled) return
     
     setSelectedSlot(slotNumber)
     setShowContactForm(true)
+    setContactType('phone') // Default to phone
+    setContactName('')
+    setContactPhone('')
+    setContactInstagram('')
   }
 
   // Format countdown timer display
@@ -399,31 +518,178 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
     return `${minutes}m`
   }
 
-  // Submit contact form
-  const handleSubmit = () => {
-    if (!contactName.trim() || !contactPhone.trim() || !selectedSlot) return
-    addContact(contactName, contactPhone, selectedSlot)
+  // Manual match processing for testing
+  const processMatchesManually = async () => {
+    if (!user) return
+    
+    setProcessingMatches(true)
+    
+    try {
+      console.log('🔄 Manually processing matches...')
+      
+      // Get all unprocessed matches
+      const { data: unprocessedMatches, error: fetchError } = await supabase
+        .from('matches')
+        .select('*')
+        .eq('is_revealed', false)
+      
+      if (fetchError) {
+        console.error('Error fetching matches:', fetchError)
+        alert('Error fetching matches')
+        return
+      }
+
+      if (!unprocessedMatches || unprocessedMatches.length === 0) {
+        alert('No new matches to process!')
+        return
+      }
+
+      console.log(`Found ${unprocessedMatches.length} potential matches to validate...`)
+
+      // Validate and reveal matches (same logic as the server script)
+      const validMatches = []
+      const invalidMatches = []
+
+      for (const match of unprocessedMatches) {
+        // Check if user1 still has user2's contact in their wishlist
+        const { data: user1Entries } = await supabase
+          .from('wishlist_entries')
+          .select('*')
+          .eq('user_id', match.user1_id)
+          .eq('contact_id', match.contact1_id)
+
+        // Check if user2 still has user1's contact in their wishlist  
+        const { data: user2Entries } = await supabase
+          .from('wishlist_entries')
+          .select('*')
+          .eq('user_id', match.user2_id)
+          .eq('contact_id', match.contact2_id)
+
+        if (user1Entries && user1Entries.length > 0 && user2Entries && user2Entries.length > 0) {
+          validMatches.push(match)
+          console.log(`✅ Match valid: ${match.user1_id} ↔ ${match.user2_id}`)
+        } else {
+          invalidMatches.push(match)
+          console.log(`❌ Match invalid (one removed the other): ${match.user1_id} ↔ ${match.user2_id}`)
+        }
+      }
+
+      // Delete invalid matches
+      if (invalidMatches.length > 0) {
+        const invalidIds = invalidMatches.map(m => m.id)
+        const { error: deleteError } = await supabase
+          .from('matches')
+          .delete()
+          .in('id', invalidIds)
+
+        if (deleteError) {
+          console.error('Error deleting invalid matches:', deleteError)
+        } else {
+          console.log(`🗑️ Deleted ${invalidMatches.length} invalid matches`)
+        }
+      }
+
+      // Reveal valid matches
+      if (validMatches.length > 0) {
+        const validIds = validMatches.map(m => m.id)
+        const { error: updateError } = await supabase
+          .from('matches')
+          .update({ 
+            is_revealed: true, 
+            revealed_at: new Date().toISOString() 
+          })
+          .in('id', validIds)
+
+        if (updateError) {
+          console.error('Error updating matches:', updateError)
+          alert('Error revealing matches')
+          return
+        }
+
+        console.log(`🎉 ${validMatches.length} valid match(es) revealed!`)
+        alert(`🎉 ${validMatches.length} match(es) revealed! Check your matches.`)
+      }
+
+      // Update next processing time
+      const { data: latestProcessing } = await supabase
+        .from('match_processing')
+        .select('id')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (latestProcessing) {
+        // Get next Thursday 5pm EST using the SQL function
+        const { data: nextThursday } = await supabase.rpc('next_thursday_5pm')
+        
+        const { error: scheduleError } = await supabase
+          .from('match_processing')
+          .update({ 
+            last_processed_at: new Date().toISOString(),
+            next_processing_at: nextThursday
+          })
+          .eq('id', latestProcessing.id)
+
+        if (scheduleError) {
+          console.error('Error updating schedule:', scheduleError)
+        } else {
+          console.log('📅 Next processing scheduled for next Thursday at 5pm EST')
+          // Refresh the next processing time
+          fetchMatchProcessing()
+        }
+      }
+
+      // Refresh data
+      onWishlistUpdated()
+      
+    } catch (error) {
+      console.error('Error processing matches:', error)
+      alert('Error processing matches')
+    } finally {
+      setProcessingMatches(false)
+    }
   }
 
-  // Create sorted slots array - unlocked slots first by number, then locked slots by unlock time
+  // Submit contact form
+  const handleSubmit = () => {
+    if (!contactName.trim() || !selectedSlot) return
+    
+    if (contactType === 'phone') {
+      if (!contactPhone.trim()) return
+      addContact(contactName, contactPhone, selectedSlot, 'phone')
+    } else {
+      if (!contactInstagram.trim()) return
+      addContact(contactName, contactInstagram, selectedSlot, 'instagram')
+    }
+  }
+
+  // Create sorted slots array - available slots first, then locked, then not-yet-unlocked
   const getSortedSlots = () => {
     const slots = Array.from({ length: 10 }, (_, i) => i + 1)
     
-    const unlockedSlots = slots.filter(slotNumber => {
+    // Helper function to check slot status
+    const getSlotStatus = (slotNumber: number) => {
       const unlock = slotUnlocks.find(u => u.slot_number === slotNumber)
-      return !unlock || new Date(unlock.unlocks_at) <= currentTime
-    }).sort((a, b) => a - b)
+      const lock = slotLocks.find(l => l.slot_number === slotNumber)
+      
+      const isUnlocked = !unlock || new Date(unlock.unlocks_at) <= currentTime
+      const isLocked = lock && new Date(lock.locked_until) > currentTime
+      
+      if (!isUnlocked) return 'not-unlocked'
+      if (isLocked) return 'locked'
+      return 'available'
+    }
     
-    const lockedSlots = slots.filter(slotNumber => {
-      const unlock = slotUnlocks.find(u => u.slot_number === slotNumber)
-      return unlock && new Date(unlock.unlocks_at) > currentTime
-    }).sort((a, b) => {
+    // Separate slots by status
+    const availableSlots = slots.filter(s => getSlotStatus(s) === 'available').sort((a, b) => a - b)
+    const lockedSlots = slots.filter(s => getSlotStatus(s) === 'locked').sort((a, b) => a - b)
+    const notUnlockedSlots = slots.filter(s => getSlotStatus(s) === 'not-unlocked').sort((a, b) => {
       const unlockA = slotUnlocks.find(u => u.slot_number === a)!
       const unlockB = slotUnlocks.find(u => u.slot_number === b)!
       return new Date(unlockA.unlocks_at).getTime() - new Date(unlockB.unlocks_at).getTime()
     })
     
-    return [...unlockedSlots, ...lockedSlots]
+    return [...availableSlots, ...lockedSlots, ...notUnlockedSlots]
   }
 
   return (
@@ -435,20 +701,65 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
         </div>
       )}
 
-      {/* Match processing countdown */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-        <p className="text-sm font-medium text-blue-900">Next Match Reveal</p>
-        <p className="text-lg font-bold text-blue-700">{getMatchCountdown()}</p>
-        <p className="text-xs text-blue-600">Thursdays at 5:00 PM EST</p>
+      {/* Match processing countdown and matches button */}
+      <div className="space-y-3">
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+          <p className="text-sm font-medium text-blue-900">Next Match Reveal</p>
+          <p className="text-lg font-bold text-blue-700">{getMatchCountdown()}</p>
+          <p className="text-xs text-blue-600">
+            {nextMatchProcessing 
+              ? nextMatchProcessing.toLocaleDateString('en-US', { 
+                  weekday: 'long', 
+                  month: 'short', 
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  timeZoneName: 'short'
+                })
+              : 'Thursdays at 5:00 PM EST'
+            }
+          </p>
+        </div>
+        
+        {/* View matches button */}
+        {matches.length > 0 && (
+          <button
+            onClick={() => setShowMatchesModal(true)}
+            className="w-full bg-green-50 border border-green-200 rounded-lg p-3 hover:bg-green-100 transition-colors"
+          >
+            <div className="flex items-center justify-center gap-2">
+              <span className="text-green-700 font-medium">🎉 View Your {matches.length} Match{matches.length !== 1 ? 'es' : ''}</span>
+            </div>
+          </button>
+        )}
+        
+        {/* Manual match processing button (for testing) */}
+        <button
+          onClick={processMatchesManually}
+          disabled={processingMatches}
+          className="w-full bg-purple-50 border border-purple-200 rounded-lg p-3 hover:bg-purple-100 transition-colors disabled:opacity-50"
+        >
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-purple-700 font-medium">
+              {processingMatches ? '⏳ Processing...' : '🔧 Process Matches Now (Testing)'}
+            </span>
+          </div>
+        </button>
       </div>
 
       {/* 10 slots in single column */}
       <div className="grid grid-cols-1 gap-3">
         {getSortedSlots().map((slotNumber) => {
           const unlock = slotUnlocks.find(u => u.slot_number === slotNumber)
-          const isLocked = unlock && new Date(unlock.unlocks_at) > currentTime
+          const lock = slotLocks.find(l => l.slot_number === slotNumber)
           const entry = wishlistEntries.find(e => e.slot_number === slotNumber)
           const isMatched = entry ? isContactMatched(entry.contact_id) : false
+          
+          // Determine slot status
+          const isUnlocked = !unlock || new Date(unlock.unlocks_at) <= currentTime
+          const isLocked = lock && new Date(lock.locked_until) > currentTime
+          const isNotYetUnlocked = !isUnlocked
+          const isAvailable = isUnlocked && !isLocked && !entry
           
           return (
             <div
@@ -457,11 +768,23 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
               className={`p-4 border-2 rounded-lg transition-all min-h-[60px] flex items-center ${
                 isMatched ? 'bg-green-50 border-green-300 shadow-md' :
                 entry ? 'bg-blue-50 border-blue-200' : 
-                isLocked ? 'bg-gray-50 border-gray-200 cursor-not-allowed' : 
+                isLocked ? 'bg-red-50 border-red-200 cursor-not-allowed' :
+                isNotYetUnlocked ? 'bg-gray-50 border-gray-200 cursor-not-allowed' : 
                 'bg-white border-gray-300 hover:border-blue-300 cursor-pointer'
               }`}
             >
               {isLocked ? (
+                // Locked slot with countdown and reason
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 text-red-400">🔒</div>
+                  <div>
+                    <p className="text-sm font-medium text-red-600">Slot {slotNumber} - Locked</p>
+                    <p className="text-xs text-red-400">
+                      {lock!.reason === 'match' ? 'Match cooldown' : 'Deletion cooldown'}: {getCountdown(lock!.locked_until)}
+                    </p>
+                  </div>
+                </div>
+              ) : isNotYetUnlocked ? (
                 // Locked slot with countdown
                 <div className="flex items-center gap-3">
                   <div className="w-5 h-5 text-gray-400">🔒</div>
@@ -489,7 +812,14 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
                       <p className="font-medium text-gray-900">{entry.contacts.name}</p>
                       {isMatched && <span className="text-green-600 font-bold">🎉 MATCH!</span>}
                     </div>
-                    <p className="text-sm text-gray-500">{formatPhone(entry.contacts.phone)}</p>
+                    <p className="text-sm text-gray-500">
+                      {entry.contacts.contact_type === 'phone' && entry.contacts.phone
+                        ? formatPhone(entry.contacts.phone)
+                        : entry.contacts.instagram_handle
+                        ? `@${entry.contacts.instagram_handle}`
+                        : 'No contact info'
+                      }
+                    </p>
                   </div>
                   <button
                     onClick={(e) => {
@@ -520,6 +850,31 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
           <div className="bg-white rounded-xl w-full max-w-sm p-6">
             <h3 className="text-lg font-semibold mb-4">Add to Slot {selectedSlot}</h3>
             <div className="space-y-4">
+              {/* Contact type selector */}
+              <div className="flex bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => setContactType('phone')}
+                  className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+                    contactType === 'phone' 
+                      ? 'bg-white text-blue-600 shadow-sm' 
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  📞 Phone
+                </button>
+                <button
+                  onClick={() => setContactType('instagram')}
+                  className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+                    contactType === 'instagram' 
+                      ? 'bg-white text-blue-600 shadow-sm' 
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  📸 Instagram
+                </button>
+              </div>
+              
+              {/* Name input */}
               <input
                 type="text"
                 placeholder="Name"
@@ -528,14 +883,27 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 autoFocus
               />
-              <input
-                type="tel"
-                placeholder="Phone Number"
-                value={formatPhone(contactPhone)}
-                onChange={(e) => setContactPhone(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                maxLength={14}
-              />
+              
+              {/* Contact input based on type */}
+              {contactType === 'phone' ? (
+                <input
+                  type="tel"
+                  placeholder="Phone Number"
+                  value={formatPhone(contactPhone)}
+                  onChange={(e) => setContactPhone(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  maxLength={14}
+                />
+              ) : (
+                <input
+                  type="text"
+                  placeholder="Instagram Handle (without @)"
+                  value={contactInstagram}
+                  onChange={(e) => setContactInstagram(e.target.value.replace(/^@/, ''))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              )}
+              
               <div className="flex gap-3">
                 <button
                   onClick={() => {
@@ -543,6 +911,7 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
                     setSelectedSlot(null)
                     setContactName('')
                     setContactPhone('')
+                    setContactInstagram('')
                   }}
                   className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
                 >
@@ -550,7 +919,7 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
                 </button>
                 <button
                   onClick={handleSubmit}
-                  disabled={!contactName.trim() || !contactPhone.trim()}
+                  disabled={!contactName.trim() || (contactType === 'phone' ? !contactPhone.trim() : !contactInstagram.trim())}
                   className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
                 >
                   Add
@@ -559,6 +928,14 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
             </div>
           </div>
         </div>
+      )}
+
+      {/* Matches modal */}
+      {showMatchesModal && (
+        <MatchesModal 
+          matches={matches}
+          onClose={() => setShowMatchesModal(false)}
+        />
       )}
     </div>
   )

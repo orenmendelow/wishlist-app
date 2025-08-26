@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import AuthForm from '@/components/AuthForm'
 import WishlistGrid from '@/components/WishlistGrid'
+import InstagramLinkModal from '@/components/InstagramLinkModal'
 import { supabase } from '@/lib/supabase'
 import { Contact, WishlistEntry } from '@/lib/database.types'
 
@@ -17,6 +18,7 @@ function AppContent() {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [wishlistEntries, setWishlistEntries] = useState<WishlistEntryWithContact[]>([])
   const [matches, setMatches] = useState<any[]>([])
+  const [showInstagramModal, setShowInstagramModal] = useState(false)
 
   // Fetch user's contacts from database
   const fetchContacts = useCallback(async () => {
@@ -86,6 +88,25 @@ function AppContent() {
       <header className="bg-white border-b border-gray-200 px-4 py-6">
         <div className="text-center">
           <h1 className="text-2xl font-bold text-gray-900">Wishlist</h1>
+          {profile && (
+            <div className="mt-3 space-y-1">
+              <div className="text-sm text-gray-600">
+                📞 {profile.phone ? profile.phone.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3') : 'No phone'}
+              </div>
+              <div className="text-sm text-gray-600">
+                {profile.instagram_handle ? (
+                  <span>📸 @{profile.instagram_handle}</span>
+                ) : (
+                  <button 
+                    onClick={() => setShowInstagramModal(true)}
+                    className="text-blue-500 hover:text-blue-600"
+                  >
+                    📸 Link Instagram
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
@@ -107,6 +128,12 @@ function AppContent() {
           Sign Out
         </button>
       </footer>
+
+      {/* Instagram Link Modal */}
+      <InstagramLinkModal 
+        isOpen={showInstagramModal} 
+        onClose={() => setShowInstagramModal(false)} 
+      />
     </div>
   )
 }
