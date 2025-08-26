@@ -663,33 +663,62 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
     }
   }
 
-  // Create sorted slots array - available slots first, then locked, then not-yet-unlocked
+  // Create sorted slots array - unlocked slots first, then locked slots by unlock time
   const getSortedSlots = () => {
     const slots = Array.from({ length: 10 }, (_, i) => i + 1)
     
-    // Helper function to check slot status
-    const getSlotStatus = (slotNumber: number) => {
+    // Separate unlocked and locked slots
+    const unlockedSlots: number[] = []
+    const lockedSlots: number[] = []
+    
+    slots.forEach(slotNumber => {
       const unlock = slotUnlocks.find(u => u.slot_number === slotNumber)
       const lock = slotLocks.find(l => l.slot_number === slotNumber)
       
-      const isUnlocked = !unlock || new Date(unlock.unlocks_at) <= currentTime
-      const isLocked = lock && new Date(lock.locked_until) > currentTime
+      // Check if slot is currently locked due to cooldown
+      const isCurrentlyLocked = lock && new Date(lock.locked_until) > currentTime
       
-      if (!isUnlocked) return 'not-unlocked'
-      if (isLocked) return 'locked'
-      return 'available'
-    }
-    
-    // Separate slots by status
-    const availableSlots = slots.filter(s => getSlotStatus(s) === 'available').sort((a, b) => a - b)
-    const lockedSlots = slots.filter(s => getSlotStatus(s) === 'locked').sort((a, b) => a - b)
-    const notUnlockedSlots = slots.filter(s => getSlotStatus(s) === 'not-unlocked').sort((a, b) => {
-      const unlockA = slotUnlocks.find(u => u.slot_number === a)!
-      const unlockB = slotUnlocks.find(u => u.slot_number === b)!
-      return new Date(unlockA.unlocks_at).getTime() - new Date(unlockB.unlocks_at).getTime()
+      // Check if slot is not yet unlocked
+      const isNotYetUnlocked = unlock && new Date(unlock.unlocks_at) > currentTime
+      
+      if (isCurrentlyLocked || isNotYetUnlocked) {
+        lockedSlots.push(slotNumber)
+      } else {
+        unlockedSlots.push(slotNumber)
+      }
     })
     
-    return [...availableSlots, ...lockedSlots, ...notUnlockedSlots]
+    // Sort unlocked slots by slot number
+    unlockedSlots.sort((a, b) => a - b)
+    
+    // Sort locked slots by earliest unlock/unlock time
+    lockedSlots.sort((a, b) => {
+      const unlockA = slotUnlocks.find(u => u.slot_number === a)
+      const unlockB = slotUnlocks.find(u => u.slot_number === b)
+      const lockA = slotLocks.find(l => l.slot_number === a)
+      const lockB = slotLocks.find(l => l.slot_number === b)
+      
+      // Get the earliest time when the slot becomes available
+      let timeA = Infinity
+      let timeB = Infinity
+      
+      if (lockA && new Date(lockA.locked_until) > currentTime) {
+        timeA = new Date(lockA.locked_until).getTime()
+      } else if (unlockA && new Date(unlockA.unlocks_at) > currentTime) {
+        timeA = new Date(unlockA.unlocks_at).getTime()
+      }
+      
+      if (lockB && new Date(lockB.locked_until) > currentTime) {
+        timeB = new Date(lockB.locked_until).getTime()
+      } else if (unlockB && new Date(unlockB.unlocks_at) > currentTime) {
+        timeB = new Date(unlockB.unlocks_at).getTime()
+      }
+      
+      return timeA - timeB
+    })
+    
+    // Return unlocked slots first, then locked slots
+    return [...unlockedSlots, ...lockedSlots]
   }
 
   return (
@@ -749,7 +778,7 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
 
       {/* 10 slots in single column */}
       <div className="grid grid-cols-1 gap-3">
-        {getSortedSlots().map((slotNumber) => {
+        {getSortedSlots().map((slotNumber, index) => {
           const unlock = slotUnlocks.find(u => u.slot_number === slotNumber)
           const lock = slotLocks.find(l => l.slot_number === slotNumber)
           const entry = wishlistEntries.find(e => e.slot_number === slotNumber)
@@ -760,6 +789,8 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
           const isLocked = lock && new Date(lock.locked_until) > currentTime
           const isNotYetUnlocked = !isUnlocked
           const isAvailable = isUnlocked && !isLocked && !entry
+          
+          const displayNumber = index + 1
           
           return (
             <div
@@ -778,7 +809,7 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
                 <div className="flex items-center gap-3">
                   <div className="w-5 h-5 text-red-400">🔒</div>
                   <div>
-                    <p className="text-sm font-medium text-red-600">Slot {slotNumber} - Locked</p>
+                    <p className="text-sm font-medium text-red-600">Slot {displayNumber} - Locked</p>
                     <p className="text-xs text-red-400">
                       {lock!.reason === 'match' ? 'Match cooldown' : 'Deletion cooldown'}: {getCountdown(lock!.locked_until)}
                     </p>
@@ -789,7 +820,7 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
                 <div className="flex items-center gap-3">
                   <div className="w-5 h-5 text-gray-400">🔒</div>
                   <div>
-                    <p className="text-sm font-medium text-gray-600">Slot {slotNumber}</p>
+                    <p className="text-sm font-medium text-gray-600">Slot {displayNumber}</p>
                     <p className="text-xs text-gray-400">
                       Unlocks in {getCountdown(unlock!.unlocks_at)}
                     </p>
@@ -836,7 +867,7 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
                 // Empty slot
                 <div className="flex items-center gap-3">
                   <div className="w-5 h-5 text-gray-400">➕</div>
-                  <p className="text-sm font-medium text-gray-500">Add to Slot {slotNumber}</p>
+                  <p className="text-sm font-medium text-gray-500">Empty slot</p>
                 </div>
               )}
             </div>
