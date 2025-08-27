@@ -662,13 +662,6 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
 
   return (
     <div className="space-y-4">
-      {/* User's phone number display */}
-      {profile?.phone && (
-        <div className="text-center p-2 bg-gray-50 rounded-lg">
-          <p className="text-sm text-gray-600">Logged in as: {formatPhone(profile.phone)}</p>
-        </div>
-      )}
-
       {/* Match processing countdown and matches button */}
       <div className="space-y-3">
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
