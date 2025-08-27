@@ -45,9 +45,6 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
   
   // Matches modal state
   const [showMatchesModal, setShowMatchesModal] = useState(false)
-  
-  // Admin/testing state
-  const [processingMatches, setProcessingMatches] = useState(false)
 
   // Fetch slot unlock times for countdown display
   const fetchSlotUnlocks = useCallback(async () => {
@@ -454,12 +451,12 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
     const lock = slotLocks.find(l => l.slot_number === slotNumber)
     const hasFilled = wishlistEntries.find(e => e.slot_number === slotNumber)
     
-    // Check if slot is not yet unlocked
+    // Check if slot is locked in any way
     const isNotYetUnlocked = unlock && new Date(unlock.unlocks_at) > currentTime
-    // Check if slot is locked (cooldown)
     const isLocked = lock && new Date(lock.locked_until) > currentTime
+    const isAnyLocked = isNotYetUnlocked || isLocked
     
-    if (isNotYetUnlocked || isLocked || hasFilled) return
+    if (isAnyLocked || hasFilled) return
     
     setSelectedSlot(slotNumber)
     setShowContactForm(true)
@@ -519,137 +516,6 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
   }
 
   // Manual match processing for testing
-  const processMatchesManually = async () => {
-    if (!user) return
-    
-    setProcessingMatches(true)
-    
-    try {
-      console.log('🔄 Manually processing matches...')
-      
-      // Get all unprocessed matches
-      const { data: unprocessedMatches, error: fetchError } = await supabase
-        .from('matches')
-        .select('*')
-        .eq('is_revealed', false)
-      
-      if (fetchError) {
-        console.error('Error fetching matches:', fetchError)
-        alert('Error fetching matches')
-        return
-      }
-
-      if (!unprocessedMatches || unprocessedMatches.length === 0) {
-        alert('No new matches to process!')
-        return
-      }
-
-      console.log(`Found ${unprocessedMatches.length} potential matches to validate...`)
-
-      // Validate and reveal matches (same logic as the server script)
-      const validMatches = []
-      const invalidMatches = []
-
-      for (const match of unprocessedMatches) {
-        // Check if user1 still has user2's contact in their wishlist
-        const { data: user1Entries } = await supabase
-          .from('wishlist_entries')
-          .select('*')
-          .eq('user_id', match.user1_id)
-          .eq('contact_id', match.contact1_id)
-
-        // Check if user2 still has user1's contact in their wishlist  
-        const { data: user2Entries } = await supabase
-          .from('wishlist_entries')
-          .select('*')
-          .eq('user_id', match.user2_id)
-          .eq('contact_id', match.contact2_id)
-
-        if (user1Entries && user1Entries.length > 0 && user2Entries && user2Entries.length > 0) {
-          validMatches.push(match)
-          console.log(`✅ Match valid: ${match.user1_id} ↔ ${match.user2_id}`)
-        } else {
-          invalidMatches.push(match)
-          console.log(`❌ Match invalid (one removed the other): ${match.user1_id} ↔ ${match.user2_id}`)
-        }
-      }
-
-      // Delete invalid matches
-      if (invalidMatches.length > 0) {
-        const invalidIds = invalidMatches.map(m => m.id)
-        const { error: deleteError } = await supabase
-          .from('matches')
-          .delete()
-          .in('id', invalidIds)
-
-        if (deleteError) {
-          console.error('Error deleting invalid matches:', deleteError)
-        } else {
-          console.log(`🗑️ Deleted ${invalidMatches.length} invalid matches`)
-        }
-      }
-
-      // Reveal valid matches
-      if (validMatches.length > 0) {
-        const validIds = validMatches.map(m => m.id)
-        const { error: updateError } = await supabase
-          .from('matches')
-          .update({ 
-            is_revealed: true, 
-            revealed_at: new Date().toISOString() 
-          })
-          .in('id', validIds)
-
-        if (updateError) {
-          console.error('Error updating matches:', updateError)
-          alert('Error revealing matches')
-          return
-        }
-
-        console.log(`🎉 ${validMatches.length} valid match(es) revealed!`)
-        alert(`🎉 ${validMatches.length} match(es) revealed! Check your matches.`)
-      }
-
-      // Update next processing time
-      const { data: latestProcessing } = await supabase
-        .from('match_processing')
-        .select('id')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single()
-
-      if (latestProcessing) {
-        // Get next Thursday 5pm EST using the SQL function
-        const { data: nextThursday } = await supabase.rpc('next_thursday_5pm')
-        
-        const { error: scheduleError } = await supabase
-          .from('match_processing')
-          .update({ 
-            last_processed_at: new Date().toISOString(),
-            next_processing_at: nextThursday
-          })
-          .eq('id', latestProcessing.id)
-
-        if (scheduleError) {
-          console.error('Error updating schedule:', scheduleError)
-        } else {
-          console.log('📅 Next processing scheduled for next Thursday at 5pm EST')
-          // Refresh the next processing time
-          fetchMatchProcessing()
-        }
-      }
-
-      // Refresh data
-      onWishlistUpdated()
-      
-    } catch (error) {
-      console.error('Error processing matches:', error)
-      alert('Error processing matches')
-    } finally {
-      setProcessingMatches(false)
-    }
-  }
-
   // Submit contact form
   const handleSubmit = () => {
     if (!contactName.trim() || !selectedSlot) return
@@ -663,62 +529,49 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
     }
   }
 
-  // Create sorted slots array - unlocked slots first, then locked slots by unlock time
+  // Create sorted slots array - available first, then filled, then locked by soonest unlock
   const getSortedSlots = () => {
     const slots = Array.from({ length: 10 }, (_, i) => i + 1)
     
-    // Separate unlocked and locked slots
-    const unlockedSlots: number[] = []
-    const lockedSlots: number[] = []
-    
-    slots.forEach(slotNumber => {
+    // Helper function to check slot status
+    const getSlotStatus = (slotNumber: number) => {
       const unlock = slotUnlocks.find(u => u.slot_number === slotNumber)
       const lock = slotLocks.find(l => l.slot_number === slotNumber)
+      const entry = wishlistEntries.find(e => e.slot_number === slotNumber)
       
-      // Check if slot is currently locked due to cooldown
-      const isCurrentlyLocked = lock && new Date(lock.locked_until) > currentTime
+      const isUnlocked = !unlock || new Date(unlock.unlocks_at) <= currentTime
+      const isLocked = lock && new Date(lock.locked_until) > currentTime
       
-      // Check if slot is not yet unlocked
-      const isNotYetUnlocked = unlock && new Date(unlock.unlocks_at) > currentTime
-      
-      if (isCurrentlyLocked || isNotYetUnlocked) {
-        lockedSlots.push(slotNumber)
-      } else {
-        unlockedSlots.push(slotNumber)
-      }
-    })
+      if (!isUnlocked || isLocked) return 'locked'
+      if (entry) return 'filled'
+      return 'available'
+    }
     
-    // Sort unlocked slots by slot number
-    unlockedSlots.sort((a, b) => a - b)
-    
-    // Sort locked slots by earliest unlock/unlock time
-    lockedSlots.sort((a, b) => {
+    // Separate slots by status
+    const availableSlots = slots.filter(s => getSlotStatus(s) === 'available').sort((a, b) => a - b)
+    const filledSlots = slots.filter(s => getSlotStatus(s) === 'filled').sort((a, b) => a - b)
+    const lockedSlots = slots.filter(s => getSlotStatus(s) === 'locked').sort((a, b) => {
       const unlockA = slotUnlocks.find(u => u.slot_number === a)
       const unlockB = slotUnlocks.find(u => u.slot_number === b)
       const lockA = slotLocks.find(l => l.slot_number === a)
       const lockB = slotLocks.find(l => l.slot_number === b)
       
-      // Get the earliest time when the slot becomes available
-      let timeA = Infinity
-      let timeB = Infinity
+      // Get the actual unlock time for each slot
+      let unlockTimeA = unlockA ? new Date(unlockA.unlocks_at).getTime() : 0
+      let unlockTimeB = unlockB ? new Date(unlockB.unlocks_at).getTime() : 0
       
+      // If slot has an active lock, use lock expiry time instead
       if (lockA && new Date(lockA.locked_until) > currentTime) {
-        timeA = new Date(lockA.locked_until).getTime()
-      } else if (unlockA && new Date(unlockA.unlocks_at) > currentTime) {
-        timeA = new Date(unlockA.unlocks_at).getTime()
+        unlockTimeA = new Date(lockA.locked_until).getTime()
       }
-      
       if (lockB && new Date(lockB.locked_until) > currentTime) {
-        timeB = new Date(lockB.locked_until).getTime()
-      } else if (unlockB && new Date(unlockB.unlocks_at) > currentTime) {
-        timeB = new Date(unlockB.unlocks_at).getTime()
+        unlockTimeB = new Date(lockB.locked_until).getTime()
       }
       
-      return timeA - timeB
+      return unlockTimeA - unlockTimeB
     })
     
-    // Return unlocked slots first, then locked slots
-    return [...unlockedSlots, ...lockedSlots]
+    return [...availableSlots, ...filledSlots, ...lockedSlots]
   }
 
   return (
@@ -762,18 +615,7 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
           </button>
         )}
         
-        {/* Manual match processing button (for testing) */}
-        <button
-          onClick={processMatchesManually}
-          disabled={processingMatches}
-          className="w-full bg-purple-50 border border-purple-200 rounded-lg p-3 hover:bg-purple-100 transition-colors disabled:opacity-50"
-        >
-          <div className="flex items-center justify-center gap-2">
-            <span className="text-purple-700 font-medium">
-              {processingMatches ? '⏳ Processing...' : '🔧 Process Matches Now (Testing)'}
-            </span>
-          </div>
-        </button>
+
       </div>
 
       {/* 10 slots in single column */}
@@ -787,42 +629,36 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
           // Determine slot status
           const isUnlocked = !unlock || new Date(unlock.unlocks_at) <= currentTime
           const isLocked = lock && new Date(lock.locked_until) > currentTime
-          const isNotYetUnlocked = !isUnlocked
+          const isAnyLocked = !isUnlocked || isLocked
           const isAvailable = isUnlocked && !isLocked && !entry
-          
-          const displayNumber = index + 1
           
           return (
             <div
               key={slotNumber}
               onClick={() => handleSlotClick(slotNumber)}
               className={`p-4 border-2 rounded-lg transition-all min-h-[60px] flex items-center ${
+                isAnyLocked ? 'bg-gray-50 border-gray-200 cursor-not-allowed' :
                 isMatched ? 'bg-green-50 border-green-300 shadow-md' :
                 entry ? 'bg-blue-50 border-blue-200' : 
-                isLocked ? 'bg-red-50 border-red-200 cursor-not-allowed' :
-                isNotYetUnlocked ? 'bg-gray-50 border-gray-200 cursor-not-allowed' : 
                 'bg-white border-gray-300 hover:border-blue-300 cursor-pointer'
               }`}
             >
-              {isLocked ? (
-                // Locked slot with countdown and reason
-                <div className="flex items-center gap-3">
-                  <div className="w-5 h-5 text-red-400">🔒</div>
-                  <div>
-                    <p className="text-sm font-medium text-red-600">Slot {displayNumber} - Locked</p>
-                    <p className="text-xs text-red-400">
-                      {lock!.reason === 'match' ? 'Match cooldown' : 'Deletion cooldown'}: {getCountdown(lock!.locked_until)}
-                    </p>
-                  </div>
-                </div>
-              ) : isNotYetUnlocked ? (
-                // Locked slot with countdown
+              {/* Order number */}
+              <div className="flex items-center justify-center w-8 h-8 bg-gray-200 rounded-full text-sm font-medium text-gray-700 mr-3">
+                {index + 1}
+              </div>
+              
+              {isAnyLocked ? (
+                // Any type of locked slot with countdown
                 <div className="flex items-center gap-3">
                   <div className="w-5 h-5 text-gray-400">🔒</div>
                   <div>
-                    <p className="text-sm font-medium text-gray-600">Slot {displayNumber}</p>
+                    <p className="text-sm font-medium text-gray-600">Locked slot</p>
                     <p className="text-xs text-gray-400">
-                      Unlocks in {getCountdown(unlock!.unlocks_at)}
+                      {isLocked 
+                        ? `${lock!.reason === 'match' ? 'Match cooldown' : 'Deletion cooldown'}: ${getCountdown(lock!.locked_until)}`
+                        : `Unlocks in ${getCountdown(unlock!.unlocks_at)}`
+                      }
                     </p>
                   </div>
                 </div>
@@ -841,7 +677,7 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
                       <p className="font-medium text-gray-900">{entry.contacts.name}</p>
-                      {isMatched && <span className="text-green-600 font-bold">🎉 MATCH!</span>}
+                      {isMatched && <span className="text-green-600 font-bold">MATCH!</span>}
                     </div>
                     <p className="text-sm text-gray-500">
                       {entry.contacts.contact_type === 'phone' && entry.contacts.phone
@@ -867,7 +703,7 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
                 // Empty slot
                 <div className="flex items-center gap-3">
                   <div className="w-5 h-5 text-gray-400">➕</div>
-                  <p className="text-sm font-medium text-gray-500">Empty slot</p>
+                  <p className="text-sm font-medium text-gray-500">Unlocked slot</p>
                 </div>
               )}
             </div>
