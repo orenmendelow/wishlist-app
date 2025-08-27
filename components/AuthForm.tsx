@@ -1,14 +1,25 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 
 export default function AuthForm() {
-  const { signInWithPhone, verifyOtp, linkInstagram, verifyInstagramOtp, loading } = useAuth()
+  const { user, profile, justLoggedIn, signInWithPhone, verifyOtp, linkInstagram, verifyInstagramOtp, skipInstagramTemporarily, skipInstagramPermanently, loading } = useAuth()
   const [phone, setPhone] = useState('')
   const [instagramHandle, setInstagramHandle] = useState('')
   const [otp, setOtp] = useState('')
   const [step, setStep] = useState<'phone' | 'phone-otp' | 'instagram-choice' | 'instagram' | 'instagram-otp'>('phone')
+
+  // If user is already logged in and just logged in, start with Instagram choice
+  useEffect(() => {
+    if (user && profile && !profile.instagram_handle && justLoggedIn) {
+      // Check if permanently skipped
+      const isPermanentlySkipped = localStorage.getItem('instagram_skipped_permanently') === 'true'
+      if (!isPermanentlySkipped) {
+        setStep('instagram-choice')
+      }
+    }
+  }, [user, profile, justLoggedIn])
 
   // Format phone as user types: (555) 123-4567
   const formatPhone = (value: string) => {
@@ -38,14 +49,17 @@ export default function AuthForm() {
   }
 
   // Handle Instagram choice
-  const handleInstagramChoice = (choice: 'link' | 'skip') => {
+  const handleInstagramChoice = (choice: 'link' | 'skip-temp' | 'skip-permanent') => {
     if (choice === 'link') {
       setStep('instagram')
+    } else if (choice === 'skip-temp') {
+      // Skip for now - will show again on next login
+      skipInstagramTemporarily()
+      window.location.reload()
     } else {
-      // Mark Instagram as skipped so user won't be asked again
-      localStorage.setItem('instagram_skipped', 'true')
-      // Complete login without Instagram
-      window.location.reload() // This will trigger the auth context to refresh
+      // Don't have Instagram - never show again
+      skipInstagramPermanently()
+      window.location.reload()
     }
   }
 
@@ -89,6 +103,9 @@ export default function AuthForm() {
           <form onSubmit={handlePhoneSubmit} className="space-y-4">
             <input
               type="tel"
+              id="phone"
+              name="phone"
+              autoComplete="tel"
               placeholder="Phone number"
               value={formatPhone(phone)}
               onChange={(e) => setPhone(e.target.value)}
@@ -116,6 +133,9 @@ export default function AuthForm() {
             
             <input
               type="text"
+              id="phone-otp"
+              name="phone-otp"
+              autoComplete="one-time-code"
               placeholder="Enter 123456"
               value={otp}
               onChange={(e) => setOtp(e.target.value)}
@@ -160,13 +180,13 @@ export default function AuthForm() {
             
             <div className="space-y-2">
               <button
-                onClick={() => handleInstagramChoice('skip')}
+                onClick={() => handleInstagramChoice('skip-temp')}
                 className="w-full text-gray-500 py-2 text-sm"
               >
                 Skip for now
               </button>
               <button
-                onClick={() => handleInstagramChoice('skip')}
+                onClick={() => handleInstagramChoice('skip-permanent')}
                 className="w-full text-gray-500 py-2 text-sm"
               >
                 I don&apos;t have Instagram
@@ -179,6 +199,9 @@ export default function AuthForm() {
           <form onSubmit={handleInstagramSubmit} className="space-y-4">
             <input
               type="text"
+              id="instagram-handle"
+              name="instagram-handle"
+              autoComplete="username"
               placeholder="Instagram handle (without @)"
               value={instagramHandle}
               onChange={(e) => setInstagramHandle(e.target.value.replace(/^@/, ''))}
@@ -212,6 +235,9 @@ export default function AuthForm() {
             
             <input
               type="text"
+              id="instagram-otp"
+              name="instagram-otp"
+              autoComplete="one-time-code"
               placeholder="Enter 123456"
               value={otp}
               onChange={(e) => setOtp(e.target.value)}

@@ -14,7 +14,7 @@ interface WishlistEntryWithContact extends WishlistEntry {
 }
 
 function AppContent() {
-  const { user, profile, loading, signOut } = useAuth()
+  const { user, profile, justLoggedIn, loading, signOut } = useAuth()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [wishlistEntries, setWishlistEntries] = useState<WishlistEntryWithContact[]>([])
   const [matches, setMatches] = useState<any[]>([])
@@ -78,14 +78,18 @@ function AppContent() {
   }
 
   // Show auth form if not logged in
-  if (!user) {
+  if (!user || !profile) {
     return <AuthForm />
   }
 
-  // If user is logged in but Instagram not linked AND hasn't skipped, show Instagram choice
-  const hasSkippedInstagram = localStorage.getItem('instagram_skipped')
-  if (user && profile && !profile.instagram_handle && !hasSkippedInstagram && !showInstagramModal) {
-    return <AuthForm />
+  // If user just logged in and Instagram not linked, check if should show flow
+  if (user && profile && !profile.instagram_handle && justLoggedIn) {
+    const isPermanentlySkipped = localStorage.getItem('instagram_skipped_permanently') === 'true'
+    const isTemporarilySkipped = sessionStorage.getItem('instagram_skipped_temporarily') === 'true'
+    
+    if (!isPermanentlySkipped && !isTemporarilySkipped) {
+      return <AuthForm />
+    }
   }
 
   // Main app UI

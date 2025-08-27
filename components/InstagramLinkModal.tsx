@@ -70,6 +70,9 @@ export default function InstagramLinkModal({ isOpen, onClose }: InstagramLinkMod
             <form onSubmit={handleSubmit} className="space-y-4">
               <input
                 type="text"
+                id="modal-instagram-handle"
+                name="modal-instagram-handle"
+                autoComplete="username"
                 placeholder="Instagram handle (without @)"
                 value={instagramHandle}
                 onChange={(e) => setInstagramHandle(e.target.value.replace(/^@/, ''))}
@@ -98,6 +101,9 @@ export default function InstagramLinkModal({ isOpen, onClose }: InstagramLinkMod
             <form onSubmit={handleSubmit} className="space-y-4">
               <input
                 type="text"
+                id="modal-instagram-otp"
+                name="modal-instagram-otp"
+                autoComplete="one-time-code"
                 placeholder="Enter 123456"
                 value={otp}
                 onChange={(e) => setOtp(e.target.value)}

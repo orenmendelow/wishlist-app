@@ -9,10 +9,13 @@ interface AuthContextType {
   user: User | null
   profile: Profile | null
   loading: boolean
+  justLoggedIn: boolean
   signInWithPhone: (phone: string) => Promise<{ error: any }>
   verifyOtp: (phone: string, otp: string) => Promise<{ error: any }>
   linkInstagram: (handle: string) => Promise<{ error: any }>
   verifyInstagramOtp: (handle: string, otp: string) => Promise<{ error: any }>
+  skipInstagramTemporarily: () => void
+  skipInstagramPermanently: () => void
   signOut: () => Promise<void>
 }
 
@@ -30,6 +33,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(false)
+  const [justLoggedIn, setJustLoggedIn] = useState(false)
 
   // Mock sign in - accepts any phone
   const signInWithPhone = async (phone: string) => {
@@ -48,11 +52,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const normalizedPhone = phone.replace(/\D/g, '')
       
       // Check if profile exists first
-      const { data: existingProfile } = await supabase
+      const { data: existingProfiles } = await supabase
         .from('profiles')
         .select('*')
         .eq('phone', normalizedPhone)
-        .single()
+      
+      const existingProfile = existingProfiles?.[0]
       
       let finalProfile
       let userId
@@ -95,6 +100,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       
       setUser(fakeUser)
       setProfile(finalProfile)
+      setJustLoggedIn(true) // Mark that user just logged in
       localStorage.setItem('wishlist_user', JSON.stringify(fakeUser))
       localStorage.setItem('wishlist_profile', JSON.stringify(finalProfile))
       
@@ -124,10 +130,23 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       
       setProfile(updatedProfile)
       localStorage.setItem('wishlist_profile', JSON.stringify(updatedProfile))
+      setJustLoggedIn(false) // Clear the just logged in flag
       
       return { error: null }
     }
     return { error: { message: 'Invalid verification code' } }
+  }
+
+  // Skip Instagram temporarily - will show again on next login
+  const skipInstagramTemporarily = () => {
+    sessionStorage.setItem('instagram_skipped_temporarily', 'true')
+    setJustLoggedIn(false) // Clear the just logged in flag
+  }
+
+  // Skip Instagram permanently - will never show again
+  const skipInstagramPermanently = () => {
+    localStorage.setItem('instagram_skipped_permanently', 'true')
+    setJustLoggedIn(false) // Clear the just logged in flag
   }
 
   // Sign out - clear all data
@@ -136,6 +155,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setProfile(null)
     localStorage.removeItem('wishlist_user')
     localStorage.removeItem('wishlist_profile')
+    sessionStorage.removeItem('instagram_skipped_temporarily')
+    // Note: We don't remove the permanent skip flag on logout
   }
 
   // Restore session from localStorage on mount
@@ -158,6 +179,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         if (dbProfile) {
           setUser(user)
           setProfile(dbProfile)
+          setJustLoggedIn(false) // This is a page refresh, not a fresh login
         } else {
           // Profile doesn't exist, clear localStorage
           localStorage.removeItem('wishlist_user')
@@ -173,10 +195,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     user,
     profile,
     loading,
+    justLoggedIn,
     signInWithPhone,
     verifyOtp,
     linkInstagram,
     verifyInstagramOtp,
+    skipInstagramTemporarily,
+    skipInstagramPermanently,
     signOut,
   }
 

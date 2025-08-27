@@ -7,7 +7,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "reset-db": "node scripts/reset-db.js",
+    "process-matches": "node scripts/process-matches.js"
   },
   "dependencies": {
     "@supabase/auth-helpers-nextjs": "^0.8.7",
