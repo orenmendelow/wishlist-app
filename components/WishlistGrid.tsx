@@ -4,7 +4,6 @@ import { useState, useCallback, useEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { Contact, WishlistEntry, SlotUnlock, SlotLock, MatchProcessing } from '@/lib/database.types'
-import MatchesModal from './MatchesModal'
 
 // Wishlist entry with contact data for display
 interface WishlistEntryWithContact extends WishlistEntry {
@@ -43,8 +42,20 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
   // Current time for countdown updates
   const [currentTime, setCurrentTime] = useState(new Date())
   
-  // Matches modal state
-  const [showMatchesModal, setShowMatchesModal] = useState(false)
+  // Matches dropdown state
+  const [showMatchesDropdown, setShowMatchesDropdown] = useState(false)
+  const [archivedMatches, setArchivedMatches] = useState<string[]>([])
+  const [showArchivedMatches, setShowArchivedMatches] = useState(false)
+
+  // Load archived matches from localStorage on mount
+  useEffect(() => {
+    if (user) {
+      const saved = localStorage.getItem(`archivedMatches_${user.id}`)
+      if (saved) {
+        setArchivedMatches(JSON.parse(saved))
+      }
+    }
+  }, [user])
 
   // Fetch slot unlock times for countdown display
   const fetchSlotUnlocks = useCallback(async () => {
@@ -515,6 +526,47 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
     return `${minutes}m`
   }
 
+  // Get contact name for a match
+  const getMatchContactName = (match: any) => {
+    if (!user) return 'Unknown Contact'
+    
+    // Determine which contact is the other person
+    const isUser1 = match.user1_id === user.id
+    const contactId = isUser1 ? match.contact1_id : match.contact2_id
+    
+    // Find the contact in our contacts array
+    const contact = contacts.find(c => c.id === contactId)
+    return contact?.name || 'Unknown Contact'
+  }
+
+  // Archive a match
+  const archiveMatch = (matchId: string) => {
+    const newArchived = [...archivedMatches, matchId]
+    setArchivedMatches(newArchived)
+    if (user) {
+      localStorage.setItem(`archivedMatches_${user.id}`, JSON.stringify(newArchived))
+    }
+  }
+
+  // Unarchive a match
+  const unarchiveMatch = (matchId: string) => {
+    const newArchived = archivedMatches.filter(id => id !== matchId)
+    setArchivedMatches(newArchived)
+    if (user) {
+      localStorage.setItem(`archivedMatches_${user.id}`, JSON.stringify(newArchived))
+    }
+  }
+
+  // Get active (non-archived) matches
+  const getActiveMatches = () => {
+    return matches.filter(match => !archivedMatches.includes(match.id))
+  }
+
+  // Get archived matches
+  const getArchivedMatches = () => {
+    return matches.filter(match => archivedMatches.includes(match.id))
+  }
+
   // Manual match processing for testing
   // Submit contact form
   const handleSubmit = () => {
@@ -603,16 +655,76 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
           </p>
         </div>
         
-        {/* View matches button */}
+        {/* View matches dropdown */}
         {matches.length > 0 && (
-          <button
-            onClick={() => setShowMatchesModal(true)}
-            className="w-full bg-green-50 border border-green-200 rounded-lg p-3 hover:bg-green-100 transition-colors"
-          >
-            <div className="flex items-center justify-center gap-2">
-              <span className="text-green-700 font-medium">🎉 View Your {matches.length} Match{matches.length !== 1 ? 'es' : ''}</span>
-            </div>
-          </button>
+          <div className="bg-white border border-gray-200 rounded-lg">
+            <button
+              onClick={() => setShowMatchesDropdown(!showMatchesDropdown)}
+              className="w-full p-3 hover:bg-gray-50 transition-colors rounded-lg"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-gray-700 font-medium">Your Matches ({getActiveMatches().length})</span>
+                <span className={`text-gray-700 transition-transform ${showMatchesDropdown ? 'rotate-180' : ''}`}>
+                  ▼
+                </span>
+              </div>
+            </button>
+            
+            {showMatchesDropdown && (
+              <div className="border-t border-gray-200 p-3 space-y-3">
+                {getActiveMatches().map((match, index) => (
+                  <div key={match.id} className="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-gray-900">{getMatchContactName(match)}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button className="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600">
+                          Text
+                        </button>
+                        <button 
+                          onClick={() => archiveMatch(match.id)}
+                          className="px-3 py-1 bg-gray-500 text-white text-sm rounded hover:bg-gray-600"
+                        >
+                          Archive
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                
+                {getArchivedMatches().length > 0 && (
+                  <div className="border-t border-gray-200 pt-3 mt-3">
+                    <button 
+                      onClick={() => setShowArchivedMatches(!showArchivedMatches)}
+                      className="w-full text-left p-2 hover:bg-gray-50 rounded text-sm text-gray-600 flex justify-between items-center"
+                    >
+                      <span>Archived ({getArchivedMatches().length})</span>
+                      <span className={`transition-transform ${showArchivedMatches ? 'rotate-180' : ''}`}>
+                        ▼
+                      </span>
+                    </button>
+                    
+                    {showArchivedMatches && (
+                      <div className="mt-2 space-y-2">
+                        {getArchivedMatches().map((match) => (
+                          <div key={match.id} className="bg-gray-100 rounded p-2 flex justify-between items-center">
+                            <span className="text-sm text-gray-600">{getMatchContactName(match)}</span>
+                            <button
+                              onClick={() => unarchiveMatch(match.id)}
+                              className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
+                            >
+                              Unarchive
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
         
 
@@ -797,13 +909,6 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
         </div>
       )}
 
-      {/* Matches modal */}
-      {showMatchesModal && (
-        <MatchesModal 
-          matches={matches}
-          onClose={() => setShowMatchesModal(false)}
-        />
-      )}
     </div>
   )
 }
