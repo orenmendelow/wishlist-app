@@ -42,6 +42,8 @@ export default function AuthForm() {
     if (choice === 'link') {
       setStep('instagram')
     } else {
+      // Mark Instagram as skipped so user won't be asked again
+      localStorage.setItem('instagram_skipped', 'true')
       // Complete login without Instagram
       window.location.reload() // This will trigger the auth context to refresh
     }

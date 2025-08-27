@@ -82,6 +82,12 @@ function AppContent() {
     return <AuthForm />
   }
 
+  // If user is logged in but Instagram not linked AND hasn't skipped, show Instagram choice
+  const hasSkippedInstagram = localStorage.getItem('instagram_skipped')
+  if (user && profile && !profile.instagram_handle && !hasSkippedInstagram && !showInstagramModal) {
+    return <AuthForm />
+  }
+
   // Main app UI
   return (
     <div className="min-h-screen bg-white flex flex-col">
