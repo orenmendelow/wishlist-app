@@ -154,14 +154,48 @@ export default function WishlistGrid({ profile, contacts, wishlistEntries, match
 
     console.log(`Adding ${type} contact with normalized identifier:`, normalizedIdentifier)
 
-    // Check if contact already exists in wishlist
-    const existingEntry = wishlistEntries.find(e => 
-      type === 'phone' ? e.contacts.phone === normalizedIdentifier 
-                       : e.contacts.instagram_handle === normalizedIdentifier
-    )
-    if (existingEntry) {
-      alert(`This contact is already in slot ${existingEntry.slot_number}`)
-      return
+    // Check if this person (by profile lookup) is already in wishlist via any identifier
+    console.log('Looking up profile for:', type, normalizedIdentifier)
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('phone, instagram_handle')
+      .or(type === 'phone' 
+          ? `phone.eq.${normalizedIdentifier}` 
+          : `instagram_handle.eq.${normalizedIdentifier}`
+      )
+      .single()
+
+    console.log('Found profile:', existingProfile)
+
+    if (existingProfile) {
+      // Check if either their phone OR Instagram is already in wishlist
+      const alreadyInWishlist = wishlistEntries.some(e => {
+        const matchesPhone = existingProfile.phone && e.contacts.phone === existingProfile.phone
+        const matchesInstagram = existingProfile.instagram_handle && e.contacts.instagram_handle === existingProfile.instagram_handle
+        console.log('Checking wishlist entry:', e.contacts, 'Phone match:', matchesPhone, 'Instagram match:', matchesInstagram)
+        return matchesPhone || matchesInstagram
+      })
+      
+      if (alreadyInWishlist) {
+        alert('This person is already added to your wishlist')
+        return
+      }
+
+      // Check if either their phone OR Instagram is already in matches
+      const alreadyMatched = matches.some(m => {
+        const contact1 = contacts.find(c => c.id === m.contact1_id)
+        const contact2 = contacts.find(c => c.id === m.contact2_id)
+        
+        return (contact1 && ((existingProfile.phone && contact1.phone === existingProfile.phone) || 
+                            (existingProfile.instagram_handle && contact1.instagram_handle === existingProfile.instagram_handle))) ||
+               (contact2 && ((existingProfile.phone && contact2.phone === existingProfile.phone) || 
+                            (existingProfile.instagram_handle && contact2.instagram_handle === existingProfile.instagram_handle)))
+      })
+      
+      if (alreadyMatched) {
+        alert('You have already been matched with this person')
+        return
+      }
     }
 
     try {
